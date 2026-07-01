@@ -897,3 +897,1181 @@ Static Analysis
 «Workflow 控制 AI，而不是 AI 控制 Workflow。»
 
 这是整个设计最核心的理念，也是该框架区别于当前多数 AI Agent 的关键所在。
+
+
+可以，而且这一步很关键——我们现在要做的不是“再加内容”，而是把这份 Final Spec 提升到工程可实现级别（Implementation-Ready Spec）。
+
+我会把它升级成三件事：
+
+> 1. 每个核心对象：字段 + 生命周期 + 不变式 + 行为
+
+
+2. 每个系统模块：输入 / 输出 / 依赖 / 失败模式
+
+
+3. 整体系统：可运行时序 + 数据流 + Event流
+
+
+
+
+
+
+---
+
+AFWP v1 Final Spec（Implementation-Ready 详细版）
+
+
+---
+
+一、Run（核心聚合根｜详细版）
+
+1.1 定义
+
+> Run = 一次完整 AI 软件工程执行任务的“数字孪生体”
+
+
+
+
+---
+
+1.2 数据结构（增强版）
+
+class Run:
+
+    # identity
+    id: str
+    template_id: str
+
+    # state
+    status: RunStatus
+    current_step_id: str | None
+
+    # context
+    input: dict
+    variables: dict
+    metadata: dict
+
+    # execution
+    actor: Actor
+    priority: int
+
+    # tracking
+    created_at: datetime
+    updated_at: datetime
+
+    # event pointer (for optimization)
+    last_event_id: str | None
+
+
+---
+
+1.3 RunStatus（冻结）
+
+CREATED
+PLANNING
+READY
+RUNNING
+WAITING_HUMAN
+WAITING_SESSION
+BLOCKED
+RETRYING
+COMPLETED
+FAILED
+CANCELLED
+ARCHIVED
+
+
+---
+
+1.4 Run 不变式（非常重要）
+
+- RUNNING 状态必须至少有一个 active step
+- WAITING_HUMAN 必须存在 pending approval event
+- COMPLETED 必须没有未完成 step
+- FAILED 必须包含 failure event
+
+
+---
+
+1.5 Run 行为（关键）
+
+run.start()
+run.pause()
+run.resume()
+run.fail()
+run.complete()
+run.replay_events()
+
+
+---
+
+二、Step（执行单元｜详细版）
+
+2.1 定义
+
+> Step = Run 内部最小执行单元（绑定 Skill）
+
+
+
+
+---
+
+2.2 数据结构
+
+class Step:
+
+    id: str
+    run_id: str
+
+    skill_id: str
+
+    status: StepStatus
+
+    input: dict
+    output: dict
+
+    context_snapshot: dict
+
+    session_id: str | None
+
+    retry_count: int
+
+    created_at: datetime
+    updated_at: datetime
+
+
+---
+
+2.3 StepStatus
+
+PENDING
+READY
+RUNNING
+WAITING
+SUCCEEDED
+FAILED
+RETRYING
+SKIPPED
+
+
+---
+
+2.4 Step 生命周期
+
+PENDING → READY → RUNNING → WAITING → SUCCEEDED
+                              ↘ FAILED → RETRYING → RUNNING
+
+
+---
+
+2.5 Step 不变式
+
+- RUNNING step 必须绑定 skill
+- SUCCEEDED 必须生成 artifact 或 event
+- WAITING 必须绑定 session 或 human gate
+
+
+---
+
+三、Skill（能力单元｜详细版）
+
+
+---
+
+3.1 定义
+
+> Skill = “可组合执行能力”，不是 prompt，而是 execution unit
+
+
+
+
+---
+
+3.2 数据结构
+
+class Skill:
+
+    id: str
+    name: str
+
+    type: SkillType
+
+    input_schema: dict
+    output_schema: dict
+
+    tools: list[str]
+
+    entrypoint: str
+
+    timeout: int
+
+    retry_policy: dict
+
+
+---
+
+3.3 SkillType
+
+OPENCODE_SKILL
+COMPOSITE_SKILL
+TOOL_SKILL
+NATIVE_SKILL
+
+
+---
+
+3.4 Skill 执行模型（重要）
+
+1. build_context()
+2. fetch_knowledge()
+3. call_tools()
+4. invoke_opencode()
+5. parse_output()
+6. validate()
+7. emit_artifacts()
+8. emit_events()
+
+
+---
+
+3.5 Skill 不变式
+
+- Skill must be stateless
+- Skill must not modify Run directly
+- Skill must emit Events only
+
+
+---
+
+四、Session（交互层｜详细版）
+
+
+---
+
+4.1 定义
+
+> Session = Run 与 OpenCode / Human 的交互容器
+
+
+
+
+---
+
+4.2 数据结构
+
+class Session:
+
+    id: str
+    run_id: str
+    step_id: str
+
+    status: SessionStatus
+
+    messages: list
+
+    context: dict
+
+    created_at: datetime
+    updated_at: datetime
+
+
+---
+
+4.3 SessionStatus
+
+ACTIVE
+PAUSED
+WAITING_INPUT
+COMPLETED
+FAILED
+
+
+---
+
+4.4 Session 行为
+
+session.send()
+session.receive()
+session.pause()
+session.resume()
+session.export()
+
+
+---
+
+五、Artifact（输出系统｜详细版）
+
+
+---
+
+5.1 定义
+
+> Artifact = Step 的结构化输出（版本化）
+
+
+
+
+---
+
+5.2 数据结构
+
+class Artifact:
+
+    id: str
+    run_id: str
+    step_id: str
+
+    type: str
+    name: str
+
+    version: int
+
+    content: str
+
+    metadata: dict
+
+    created_at: datetime
+
+
+---
+
+5.3 Artifact 类型
+
+markdown
+code
+json
+diagram
+patch
+log
+analysis_report
+design_doc
+
+
+---
+
+5.4 不变式
+
+- Artifact is immutable
+- new version = new Artifact object
+
+
+---
+
+六、Event（系统核心｜详细版）
+
+
+---
+
+6.1 定义
+
+> Event = 系统唯一事实记录（source of truth）
+
+
+
+
+---
+
+6.2 数据结构
+
+class Event:
+
+    id: str
+    run_id: str
+
+    type: EventType
+    payload: dict
+
+    timestamp: datetime
+
+    step_id: str | None
+
+
+---
+
+6.3 EventType（扩展冻结）
+
+RUN_CREATED
+RUN_STARTED
+RUN_COMPLETED
+
+STEP_CREATED
+STEP_STARTED
+STEP_COMPLETED
+STEP_FAILED
+
+SESSION_CREATED
+SESSION_MESSAGE
+SESSION_COMPLETED
+
+HUMAN_APPROVAL_REQUESTED
+HUMAN_APPROVED
+HUMAN_REJECTED
+
+ARTIFACT_CREATED
+ARTIFACT_VERSIONED
+
+VALIDATION_PASSED
+VALIDATION_FAILED
+
+
+---
+
+6.4 Event 不变式
+
+- Event is immutable
+- Event cannot be updated or deleted
+
+
+---
+
+七、Knowledge（认知系统｜详细版）
+
+
+---
+
+7.1 定义
+
+> Knowledge = 外部系统的结构化投影
+
+
+
+
+---
+
+7.2 数据结构
+
+class Knowledge:
+
+    id: str
+    type: KnowledgeType
+
+    source: str
+
+    content: dict
+
+    timestamp: datetime
+
+
+---
+
+7.3 KnowledgeType
+
+CODEGRAPH
+GIT
+DOCS
+BUILD_LOG
+ASSERT_DUMP
+MEMORY
+DEPENDENCY_GRAPH
+CALL_GRAPH
+
+
+---
+
+7.4 行为
+
+knowledge.query()
+knowledge.search()
+knowledge.refresh()
+
+
+---
+
+八、Tool System（工具层｜详细版）
+
+
+---
+
+8.1 定义
+
+> Tool = 外部能力执行器
+
+
+
+
+---
+
+8.2 Tool Interface
+
+class Tool:
+
+    id: str
+    type: ToolType
+
+    def execute(self, input: dict) -> dict:
+        pass
+
+
+---
+
+8.3 ToolType
+
+MCP
+CODEGRAPH
+GRAPHIFY
+GIT
+FILESYSTEM
+ANALYZER
+CLI
+
+
+---
+
+8.4 Tool Failure Model
+
+TIMEOUT
+INVALID_INPUT
+CONNECTION_ERROR
+EXECUTION_ERROR
+
+
+---
+
+九、Execution Engine（详细运行模型）
+
+
+---
+
+9.1 主循环（完整版）
+
+while not run.is_terminal():
+
+    state = replay(run.events)
+
+    step = scheduler.select(state)
+
+    if step is None:
+        break
+
+    try:
+
+        result = skill_executor.execute(step, state)
+
+        event_store.append(result.events)
+
+    except Exception as e:
+
+        event_store.append(FailureEvent(e))
+
+
+---
+
+十、Scheduler（详细逻辑）
+
+
+---
+
+def select(state):
+
+    if state.run.waiting_human:
+        return None
+
+    if state.run.waiting_session:
+        return None
+
+    step = next_pending_step(state.workflow)
+
+    if step.requires_validation_failed:
+        return retry(step)
+
+    return step
+
+
+---
+
+十一、系统数据流（最终完整版）
+
+
+---
+
+Run Input
+   ↓
+WorkflowTemplate
+   ↓
+Scheduler
+   ↓
+Step
+   ↓
+Skill
+   ↓
+KnowledgeHub
+   ↓
+Tool Layer (CodeGraph / MCP / Graphify)
+   ↓
+OpenCode Runtime
+   ↓
+Validator
+   ↓
+Artifact
+   ↓
+Event Store
+   ↓
+State Rebuild
+   ↓
+Loop
+
+
+---
+
+十二、关键设计收敛点（最终冻结）
+
+❌ 不允许变化
+
+Run 模型
+
+Event 类型
+
+Step 生命周期
+
+Skill Interface
+
+Artifact 不可变性
+
+KnowledgeHub API
+
+
+
+---
+
+⚠️ 可扩展
+
+Skill 实现
+
+Tool 接入
+
+MCP 插件
+
+OpenCode backend
+
+
+
+---
+
+十三、最终系统本质（一句话）
+
+> AFWP = Event-Sourced Run Execution System + Skill Graph + Knowledge Fusion + Tool Orchestration
+
+
+
+
+---
+
+十四、下一步（如果继续）
+
+如果你还要往下走，下一步就不是设计了，而是：
+
+> 🚀 AFWP v1 Python MVP 实现（可运行版本）
+
+
+
+我可以帮你直接生成：
+
+可运行 Run Engine
+
+Event Store（JSON）
+
+Scheduler
+
+
+很好，我们现在进入最后一步：
+
+> AFWP v1 Final Architecture Freeze（最终冻结规范）
+
+
+
+这一阶段的目标只有一个：
+
+> 把我们前面所有设计“压缩成一个可实现、可交付、可开发的系统规范”
+
+
+
+不是再扩展，而是收敛 + 冻结 + 可实现化。
+
+
+---
+
+一、AFWP v1 本质定义（最终版）
+
+先给系统一个最终定义：
+
+> AFWP = Event-Sourced + Run-Centric + Skill-Graph + Knowledge-Fused AI Execution System
+
+
+
+它不是：
+
+Workflow Engine ❌
+
+Agent Framework ❌
+
+Prompt Orchestration ❌
+
+
+而是：
+
+> AI 软件工程执行系统（AI Software Execution System）
+
+
+
+
+---
+
+二、最终系统分层（冻结架构）
+
+┌──────────────────────────────────────┐
+│            Human Layer              │
+│  CLI / Web / VSCode / Reviewer      │
+└──────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────┐
+│          Run Orchestration          │
+│   (Scheduler + State + Event Loop)  │
+└──────────────────────────────────────┘
+                │
+     ┌──────────┼──────────┐
+     ▼          ▼          ▼
+┌────────┐ ┌────────┐ ┌────────────┐
+│ Skill  │ │ Event  │ │ Session    │
+│ Engine │ │ Store  │ │ System     │
+└────────┘ └────────┘ └────────────┘
+     │
+     ▼
+┌──────────────────────────────────────┐
+│      Knowledge & Tooling Layer       │
+│ CodeGraph / Graphify / MCP / Git     │
+└──────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────┐
+│         OpenCode Runtime Layer       │
+│   (LLM Execution Backend Adapter)    │
+└──────────────────────────────────────┘
+
+
+---
+
+三、最终冻结对象模型（核心）
+
+1. Run（唯一聚合根）
+
+class Run:
+
+    id: str
+    template_id: str
+
+    status: RunStatus
+
+    current_step: str
+
+    context: dict
+
+    actor: Actor
+
+    created_at: datetime
+    updated_at: datetime
+
+
+---
+
+RunStatus（冻结）
+
+CREATED
+PLANNING
+RUNNING
+WAITING_HUMAN
+WAITING_SESSION
+PAUSED
+COMPLETED
+FAILED
+CANCELLED
+ARCHIVED
+
+
+---
+
+2. Event（系统真相源）
+
+class Event:
+
+    id: str
+    run_id: str
+
+    type: EventType
+    payload: dict
+
+    timestamp: datetime
+
+
+---
+
+EventType（冻结）
+
+RUN_CREATED
+STEP_STARTED
+STEP_COMPLETED
+STEP_FAILED
+
+SESSION_CREATED
+SESSION_MESSAGE
+SESSION_COMPLETED
+
+HUMAN_APPROVED
+HUMAN_REJECTED
+
+ARTIFACT_CREATED
+
+VALIDATION_PASSED
+VALIDATION_FAILED
+
+RUN_COMPLETED
+
+
+---
+
+3. Step（运行实例）
+
+class Step:
+
+    id: str
+    run_id: str
+
+    skill: str
+
+    status: StepStatus
+
+    input: dict
+    output: dict
+
+    session_id: str | None
+
+
+---
+
+StepStatus
+
+PENDING
+RUNNING
+WAITING
+DONE
+FAILED
+RETRYING
+
+
+---
+
+4. Skill（能力单元）
+
+class Skill:
+
+    id: str
+    type: SkillType
+
+    tools: list[str]
+
+    execute(context): Result
+
+
+---
+
+SkillType
+
+OPENCODE
+COMPOSITE
+TOOL
+NATIVE
+
+
+---
+
+5. Session（交互单元）
+
+class Session:
+
+    id: str
+    run_id: str
+    step_id: str
+
+    messages: list
+
+    status: SessionStatus
+
+
+---
+
+6. Artifact（版本化输出）
+
+class Artifact:
+
+    id: str
+    run_id: str
+    step_id: str
+
+    type: str
+    name: str
+
+    version: int
+    content: str
+
+
+---
+
+7. Knowledge（统一知识层）
+
+class Knowledge:
+
+    id: str
+    type: KnowledgeType
+
+    content: any
+
+
+---
+
+KnowledgeType
+
+CODEGRAPH
+GIT
+DOCS
+MEMORY
+BUILD_LOG
+ASSERT_DUMP
+GRAPH
+
+
+---
+
+8. Actor（统一执行体）
+
+class Actor:
+
+    id: str
+    type: ActorType
+
+
+---
+
+ActorType
+
+HUMAN
+OPENCODE
+GPT
+CLAUDE
+SYSTEM
+
+
+---
+
+四、Execution Engine（最终运行模型）
+
+while run.status not terminal:
+
+    state = rebuild(run.events)
+
+    step = scheduler.next(state)
+
+    result = skill_executor.execute(step)
+
+    event_store.append(result.events)
+
+    if result.waiting:
+        break
+
+
+---
+
+五、Skill Execution Model（最终冻结）
+
+Run
+ ↓
+Step
+ ↓
+Skill Resolver
+ ↓
+Skill Executor
+ ↓
+KnowledgeHub
+ ↓
+Tool Layer (MCP / CodeGraph / Graphify)
+ ↓
+OpenCode Runtime
+ ↓
+Validator
+ ↓
+Artifact
+ ↓
+Event Store
+
+
+---
+
+六、系统核心原则（最终冻结）
+
+1. Event Sourcing
+
+> 状态不可直接修改，只能由 Event 推导
+
+
+
+
+---
+
+2. Run = 唯一真相源
+
+所有系统状态属于 Run
+
+
+---
+
+3. Skill = 无状态能力单元
+
+Skill 不保存任何状态
+
+
+---
+
+4. Knowledge = 外部世界投影
+
+所有数据来自 KnowledgeHub
+
+
+---
+
+5. Tool = 执行能力接口
+
+所有外部系统必须通过 Tool Adapter
+
+
+---
+
+6. OpenCode = LLM runtime（不是系统核心）
+
+
+---
+
+七、系统运行闭环（最终版）
+
+1. Create Run
+2. Load WorkflowTemplate
+3. Scheduler selects Step
+4. Skill executes
+5. Query KnowledgeHub
+6. Call Tools (CodeGraph/MCP)
+7. OpenCode reasoning
+8. Generate Artifact
+9. Emit Event
+10. Rebuild State
+11. Continue Loop
+
+
+---
+
+八、目录结构（可直接开仓库）
+
+afwp/
+
+├── core/
+│   ├── run.py
+│   ├── step.py
+│   ├── event.py
+│   ├── state.py
+│
+├── engine/
+│   ├── scheduler.py
+│   ├── executor.py
+│   ├── event_loop.py
+│
+├── skill/
+│   ├── base.py
+│   ├── registry.py
+│   ├── composite/
+│
+├── knowledge/
+│   ├── hub.py
+│   ├── codegraph.py
+│   ├── git.py
+│
+├── tools/
+│   ├── mcp.py
+│   ├── graphify.py
+│   ├── adapters/
+│
+├── session/
+├── artifact/
+├── adapters/opencode/
+├── api/
+└── cli/
+
+
+---
+
+九、AFWP v1 的最终本质（非常重要）
+
+最后总结一句最核心的话：
+
+> AFWP 不是 Workflow System，而是“AI 驱动的软件执行引擎”
+
+
+
+
+---
+
+十、你现在已经完成了什么？
+
+你已经构建完成：
+
+层	状态
+
+Architecture	✔
+Domain Model	✔
+Execution Engine	✔
+Skill System	✔
+Knowledge System	✔
+Final Freeze	✔
+
+
+
+---
+
+十一、下一步（真正进入工程阶段）
+
+如果继续，我可以帮你做最后一步：
+
+> 🚀 AFWP v1 MVP Python Skeleton（可运行版本）
+
+
+
+包括：
+
+最小 Run Engine
+
+Event Store（JSON）
+
+Mock OpenCode Adapter
+
+CLI interaction
+
+一个完整 Skill（superpowers / openspec）
+
+一个 SSD 示例 workflow
+
+
+那一步开始：
+
+> 你就可以真正跑第一个 AI 固件分析 workflow 了。
+
+Mock OpenCode Adapter
+
+superpowers / openspec skill demo
+
+CLI 人机交互
+
+一个完整 SSD workflow 示例
+
+
+
+---
+
+如果你说“继续”，下一步我们就开始从设计进入真实代码级实现。
+
+
